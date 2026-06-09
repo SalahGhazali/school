@@ -1,0 +1,780 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>بوابة المعلم الذكية</title>
+
+    <!-- PWA Manifest مدمج -->
+    <script>
+    // إنشاء manifest.json ديناميكياً وربطه بالصفحة
+    const manifest = {
+        name: "بوابة المعلم الذكية",
+        short_name: "بوابة المعلم",
+        description: "نظام إدارة درجات الطلاب وإصدار الشهادات",
+        start_url: ".",
+        display: "standalone",
+        background_color: "#0A2540",
+        theme_color: "#0A2540",
+        lang: "ar",
+        dir: "rtl",
+        icons: [
+            { src: "https://img.icons8.com/fluency/192/graduation-cap.png", sizes: "192x192", type: "image/png" },
+            { src: "https://img.icons8.com/fluency/512/graduation-cap.png", sizes: "512x512", type: "image/png" }
+        ]
+    };
+    const blob = new Blob([JSON.stringify(manifest)], { type: "application/json" });
+    const manifestURL = URL.createObjectURL(blob);
+    const link = document.createElement("link");
+    link.rel = "manifest";
+    link.href = manifestURL;
+    document.head.appendChild(link);
+    </script>
+
+    <!-- Service Worker تسجيل -->
+    <script>
+    if ('serviceWorker' in navigator) {
+        const swCode = `
+const CACHE_NAME = 'teacher-portal-v1';
+const URLS_TO_CACHE = [
+    'https://fonts.googleapis.com/css2?family=Amiri:ital,wght@0,400;0,700;1,400&family=Cairo:wght@300;400;600;700;900&display=swap',
+    'https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css',
+    'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js'
+];
+
+self.addEventListener('install', event => {
+    event.waitUntil(
+        caches.open(CACHE_NAME).then(cache => {
+            return cache.addAll(URLS_TO_CACHE).catch(() => {});
+        })
+    );
+    self.skipWaiting();
+});
+
+self.addEventListener('activate', event => {
+    event.waitUntil(
+        caches.keys().then(keys =>
+            Promise.all(keys.filter(k => k !== CACHE_NAME).map(k => caches.delete(k)))
+        )
+    );
+    self.clients.claim();
+});
+
+self.addEventListener('fetch', event => {
+    event.respondWith(
+        caches.match(event.request).then(cached => cached || fetch(event.request).catch(() => new Response('', { status: 503 })))
+    );
+});
+        `;
+        const swBlob = new Blob([swCode], { type: 'application/javascript' });
+        const swURL = URL.createObjectURL(swBlob);
+        navigator.serviceWorker.register(swURL).catch(() => {});
+    }
+    </script>
+
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Amiri:ital,wght@0,400;0,700;1,400&family=Cairo:wght@300;400;600;700;900&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        brand: {
+                            navy: '#0A2540',
+                            gold: '#D4AF37',
+                            lightgold: '#F4E8C1',
+                            slate: '#F8FAF2',
+                        }
+                    },
+                    fontFamily: {
+                        cairo: ['Cairo', 'sans-serif'],
+                        amiri: ['Amiri', 'serif'],
+                    }
+                }
+            }
+        }
+    </script>
+
+    <style>
+        body { font-family: 'Cairo', sans-serif; background-color: #f1f5f9; }
+
+        @media print {
+            body * { visibility: hidden; }
+            #printable-certificate-area, #printable-certificate-area * { visibility: visible; }
+            #printable-certificate-area {
+                position: absolute; left: 0; top: 0; width: 100%; height: auto;
+                background-color: white !important;
+                -webkit-print-color-adjust: exact; print-color-adjust: exact;
+            }
+            .no-print { display: none !important; }
+        }
+
+        /* مؤشر الاتصال */
+        #offline-banner {
+            display: none;
+            position: fixed; bottom: 0; left: 0; right: 0;
+            background: #D97706; color: white; text-align: center;
+            padding: 8px; font-weight: bold; font-size: 13px; z-index: 100;
+        }
+        body.offline #offline-banner { display: block; }
+        body.offline { padding-bottom: 36px; }
+
+        /* تأثير ظهور الصفوف */
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+        tbody tr { animation: fadeIn 0.2s ease both; }
+    </style>
+</head>
+<body class="min-h-screen pb-12">
+
+    <!-- شريط الوضع أوفلاين -->
+    <div id="offline-banner">
+        <i class="fa-solid fa-wifi-slash ml-2"></i>
+        أنت حالياً بدون إنترنت — بياناتك محفوظة محلياً وتعمل بشكل طبيعي
+    </div>
+
+    <!-- شريط التنقل -->
+    <header class="bg-brand-navy text-white shadow-lg border-b-4 border-brand-gold sticky top-0 z-40">
+        <div class="max-w-7xl mx-auto px-4 py-4 flex flex-col sm:flex-row justify-between items-center gap-4">
+            <div class="flex items-center gap-3">
+                <div class="bg-brand-gold p-2.5 rounded-xl shadow-md">
+                    <i class="fa-solid fa-graduation-cap text-brand-navy text-2xl"></i>
+                </div>
+                <div>
+                    <h1 class="text-xl sm:text-2xl font-black tracking-wide">بوابة المعلم الذكية</h1>
+                    <p class="text-xs text-brand-lightgold font-light">البيانات محفوظة تلقائياً • تعمل بدون إنترنت</p>
+                </div>
+            </div>
+            <div class="flex flex-wrap gap-2 items-center">
+                <!-- زر التثبيت -->
+                <button id="install-btn" onclick="installPWA()" class="hidden bg-purple-600 hover:bg-purple-700 text-white px-4 py-2 rounded-lg text-sm font-bold flex items-center gap-2 shadow transition-all">
+                    <i class="fa-solid fa-download"></i>
+                    <span>تثبيت التطبيق</span>
+                </button>
+
+                <label for="excel-upload" class="cursor-pointer bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-lg text-sm font-bold flex items-center gap-2 shadow transition-all">
+                    <i class="fa-solid fa-file-import"></i>
+                    <span>استيراد من Excel</span>
+                </label>
+                <input type="file" id="excel-upload" accept=".xlsx,.xls,.csv" class="hidden" onchange="importFromExcel(event)">
+
+                <button onclick="exportToExcel()" class="bg-amber-500 hover:bg-amber-600 text-brand-navy px-4 py-2 rounded-lg text-sm font-black flex items-center gap-2 shadow transition-all">
+                    <i class="fa-solid fa-file-excel"></i>
+                    <span>تصدير إلى Excel</span>
+                </button>
+
+                <!-- زر حذف كل البيانات -->
+                <button onclick="clearAllData()" class="bg-rose-700 hover:bg-rose-800 text-white px-3 py-2 rounded-lg text-sm font-bold flex items-center gap-1 shadow transition-all" title="مسح كل البيانات">
+                    <i class="fa-solid fa-trash-can"></i>
+                </button>
+            </div>
+        </div>
+    </header>
+
+    <!-- المحتوى الرئيسي -->
+    <main class="max-w-7xl mx-auto px-4 mt-8 grid grid-cols-1 lg:grid-cols-12 gap-8">
+
+        <!-- القسم الأيمن: الإدخال والإحصاء -->
+        <section class="lg:col-span-4 flex flex-col gap-6">
+            <div class="bg-white p-6 rounded-2xl shadow-md border border-slate-200">
+                <div class="flex items-center gap-2 mb-4 border-b pb-3 border-slate-100">
+                    <i class="fa-solid fa-user-plus text-brand-gold text-lg"></i>
+                    <h2 class="text-lg font-bold text-brand-navy" id="form-title">إضافة طالب جديد</h2>
+                </div>
+
+                <form id="student-form" onsubmit="handleFormSubmit(event)" class="space-y-4">
+                    <input type="hidden" id="edit-id" value="">
+
+                    <div>
+                        <label class="block text-sm font-bold text-slate-700 mb-1">اسم الطالب رباعي</label>
+                        <input type="text" id="student-name" required placeholder="أدخل اسم الطالب الكامل"
+                            class="w-full px-4 py-2.5 rounded-xl border border-slate-300 focus:outline-none focus:ring-2 focus:ring-brand-navy text-sm font-semibold">
+                    </div>
+
+                    <div>
+                        <label class="block text-sm font-bold text-slate-700 mb-1">الصف الدراسي</label>
+                        <select id="student-class" required
+                            class="w-full px-4 py-2.5 rounded-xl border border-slate-300 focus:outline-none focus:ring-2 focus:ring-brand-navy text-sm font-semibold">
+                            <option value="">اختر الصف...</option>
+                            <option>الصف الأول</option>
+                            <option>الصف الثاني</option>
+                            <option>الصف الثالث</option>
+                            <option>الصف الرابع</option>
+                            <option>الصف الخامس</option>
+                        </select>
+                    </div>
+
+                    <div class="grid grid-cols-3 gap-2 pt-2">
+                        <div>
+                            <label class="block text-xs font-bold text-slate-600 mb-1 text-center">الرياضيات</label>
+                            <input type="number" id="grade-math" required min="0" max="100" placeholder="100"
+                                class="w-full text-center px-2 py-2 rounded-xl border border-slate-300 focus:outline-none focus:ring-2 focus:ring-brand-navy text-sm font-bold">
+                        </div>
+                        <div>
+                            <label class="block text-xs font-bold text-slate-600 mb-1 text-center">العلوم</label>
+                            <input type="number" id="grade-science" required min="0" max="100" placeholder="100"
+                                class="w-full text-center px-2 py-2 rounded-xl border border-slate-300 focus:outline-none focus:ring-2 focus:ring-brand-navy text-sm font-bold">
+                        </div>
+                        <div>
+                            <label class="block text-xs font-bold text-slate-600 mb-1 text-center">اللغة العربية</label>
+                            <input type="number" id="grade-arabic" required min="0" max="100" placeholder="100"
+                                class="w-full text-center px-2 py-2 rounded-xl border border-slate-300 focus:outline-none focus:ring-2 focus:ring-brand-navy text-sm font-bold">
+                        </div>
+                    </div>
+
+                    <div class="pt-4 flex gap-2">
+                        <button type="submit" class="flex-1 bg-brand-navy hover:bg-slate-800 text-white font-bold py-3 px-4 rounded-xl shadow transition flex items-center justify-center gap-2">
+                            <i class="fa-solid fa-floppy-disk"></i>
+                            <span id="save-btn-text">حفظ البيانات</span>
+                        </button>
+                        <button type="button" id="cancel-edit-btn" onclick="resetForm()" class="hidden bg-slate-200 hover:bg-slate-300 text-slate-700 font-bold py-3 px-4 rounded-xl transition">
+                            إلغاء
+                        </button>
+                    </div>
+                </form>
+            </div>
+
+            <!-- بطاقات الإحصاء -->
+            <div class="grid grid-cols-2 gap-4">
+                <div class="bg-white p-4 rounded-2xl shadow-sm border border-slate-200 text-center">
+                    <span class="text-xs text-slate-500 font-bold block mb-1">إجمالي الطلاب</span>
+                    <span id="stat-total" class="text-3xl font-black text-brand-navy">0</span>
+                </div>
+                <div class="bg-white p-4 rounded-2xl shadow-sm border border-slate-200 text-center">
+                    <span class="text-xs text-slate-500 font-bold block mb-1">المعدل العام</span>
+                    <span id="stat-average" class="text-3xl font-black text-brand-gold">0%</span>
+                </div>
+                <div class="bg-white p-4 rounded-2xl shadow-sm border border-slate-200 text-center">
+                    <span class="text-xs text-slate-500 font-bold block mb-1">نسبة النجاح</span>
+                    <span id="stat-pass-rate" class="text-2xl font-black text-emerald-600">0%</span>
+                </div>
+                <div class="bg-white p-4 rounded-2xl shadow-sm border border-slate-200 text-center">
+                    <span class="text-xs text-slate-500 font-bold block mb-1">المتفوقين (90+)</span>
+                    <span id="stat-honors" class="text-2xl font-black text-amber-500">0</span>
+                </div>
+            </div>
+
+            <!-- بطاقة معلومات التخزين -->
+            <div class="bg-brand-navy/5 border border-brand-navy/20 rounded-2xl p-4 text-center">
+                <p class="text-xs font-bold text-brand-navy">
+                    <i class="fa-solid fa-database ml-1 text-brand-gold"></i>
+                    البيانات محفوظة على جهازك تلقائياً
+                </p>
+                <p class="text-xs text-slate-500 mt-1" id="last-saved-label">لم يتم الحفظ بعد</p>
+            </div>
+        </section>
+
+        <!-- القسم الأيسر: الجدول -->
+        <section class="lg:col-span-8 flex flex-col gap-4">
+            <div class="bg-white p-4 rounded-2xl shadow-sm border border-slate-200 flex flex-col sm:flex-row gap-4 items-center justify-between">
+                <div class="relative w-full sm:w-72">
+                    <input type="text" id="search-input" oninput="renderStudentsTable()" placeholder="ابحث باسم الطالب..."
+                        class="w-full pl-4 pr-10 py-2.5 rounded-xl border border-slate-300 focus:outline-none focus:ring-2 focus:ring-brand-navy text-sm font-semibold">
+                    <i class="fa-solid fa-magnifying-glass absolute right-3.5 top-3.5 text-slate-400"></i>
+                </div>
+                <div class="flex items-center gap-2 w-full sm:w-auto justify-end">
+                    <span class="text-xs text-slate-500 font-bold whitespace-nowrap">تصفية الصف:</span>
+                    <select id="filter-class" onchange="renderStudentsTable()"
+                        class="px-3 py-2 rounded-xl border border-slate-300 text-sm font-semibold focus:outline-none">
+                        <option value="الكل">جميع الصفوف</option>
+                        <option>الصف الأول</option>
+                        <option>الصف الثاني</option>
+                        <option>الصف الثالث</option>
+                        <option>الصف الرابع</option>
+                        <option>الصف الخامس</option>
+                    </select>
+                </div>
+            </div>
+
+            <div class="bg-white rounded-2xl shadow-md border border-slate-200 overflow-hidden">
+                <div class="overflow-x-auto">
+                    <table class="w-full text-right border-collapse">
+                        <thead>
+                            <tr class="bg-brand-navy text-white text-sm">
+                                <th class="p-4 font-bold border-b border-brand-gold">اسم الطالب</th>
+                                <th class="p-4 font-bold border-b border-brand-gold text-center">الصف</th>
+                                <th class="p-4 font-bold border-b border-brand-gold text-center">رياضيات</th>
+                                <th class="p-4 font-bold border-b border-brand-gold text-center">علوم</th>
+                                <th class="p-4 font-bold border-b border-brand-gold text-center">عربي</th>
+                                <th class="p-4 font-bold border-b border-brand-gold text-center">المعدل</th>
+                                <th class="p-4 font-bold border-b border-brand-gold text-center">النتيجة</th>
+                                <th class="p-4 font-bold border-b border-brand-gold text-center">خيارات</th>
+                            </tr>
+                        </thead>
+                        <tbody id="students-table-body" class="divide-y divide-slate-100 text-sm"></tbody>
+                    </table>
+                </div>
+                <div class="bg-slate-50 p-4 border-t border-slate-200 flex justify-between items-center text-xs font-bold text-slate-600">
+                    <div>
+                        معروض: <span id="visible-count" class="text-brand-navy">0</span>
+                        من <span id="total-count" class="text-brand-navy">0</span> طالب
+                    </div>
+                    <div class="flex gap-4">
+                        <span class="flex items-center gap-1"><span class="w-2.5 h-2.5 bg-emerald-500 rounded-full"></span>ناجح</span>
+                        <span class="flex items-center gap-1"><span class="w-2.5 h-2.5 bg-rose-500 rounded-full"></span>راسب</span>
+                    </div>
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <!-- Modal الشهادة -->
+    <div id="certificate-modal" class="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4 hidden no-print">
+        <div class="bg-white rounded-3xl max-w-5xl w-full p-6 shadow-2xl relative overflow-hidden flex flex-col max-h-[95vh]">
+            <button onclick="closeCertificateModal()" class="absolute top-4 left-4 text-slate-400 hover:text-slate-600 text-2xl transition z-50">
+                <i class="fa-solid fa-circle-xmark"></i>
+            </button>
+
+            <div class="flex gap-4 mb-4 border-b pb-3 items-center">
+                <span class="text-sm font-bold text-slate-700">اختر طابع الشهادة:</span>
+                <button onclick="switchCertificateStyle('classic')" id="style-btn-classic" class="px-4 py-1.5 rounded-xl text-xs font-bold bg-brand-navy text-white shadow-md transition-all">الملكي الكلاسيكي</button>
+                <button onclick="switchCertificateStyle('modern')" id="style-btn-modern" class="px-4 py-1.5 rounded-xl text-xs font-bold bg-slate-100 text-slate-700 hover:bg-slate-200 transition-all">العصري الفاخر</button>
+            </div>
+
+            <div class="flex-1 overflow-auto p-4 flex justify-center items-center bg-slate-100 rounded-2xl border border-slate-200">
+                <div id="printable-certificate-area" class="w-[850px] h-[550px] bg-white relative shadow-lg flex-shrink-0">
+
+                    <!-- الكلاسيكي -->
+                    <div id="cert-style-classic" class="absolute inset-0 p-8 flex flex-col justify-between items-center text-center border-[14px] border-brand-navy">
+                        <div class="absolute inset-2 border-2 border-brand-gold pointer-events-none">
+                            <div class="absolute top-2 right-2 w-8 h-8 border-t-2 border-r-2 border-brand-gold"></div>
+                            <div class="absolute top-2 left-2 w-8 h-8 border-t-2 border-l-2 border-brand-gold"></div>
+                            <div class="absolute bottom-2 right-2 w-8 h-8 border-b-2 border-r-2 border-brand-gold"></div>
+                            <div class="absolute bottom-2 left-2 w-8 h-8 border-b-2 border-l-2 border-brand-gold"></div>
+                        </div>
+                        <div class="text-sm font-bold text-brand-navy tracking-wide pt-2 z-10">وزارة التعليم والريادة • مدرسة التميز والإبداع</div>
+                        <div class="font-amiri text-5xl font-black text-brand-gold my-1 drop-shadow-sm z-10">شهـادة شكـر وتقـدير</div>
+                        <div class="font-amiri text-lg text-slate-800 max-w-2xl leading-loose px-6 z-10">
+                            يَسُر إِدارَة مَدرَسَةِ التَّمَيُّزِ أَن تَتَقَدَّمَ بِوافِرِ الشُّكْرِ لِلطَّالِبِ المُنْجِزِ:<br>
+                            <span id="classic-cert-name" class="font-amiri text-3xl font-bold text-brand-navy border-b-2 border-dashed border-brand-gold px-8 py-1 inline-block my-2">—</span><br>
+                            المُقَيَّد فِي: <span id="classic-cert-class" class="font-bold text-brand-navy">—</span><br>
+                            نَظِيرَ تَمَيُّزِهِ الأَكَادِيمِيِّ وَحُصُولِهِ عَلَى مُعَدَّلٍ قَدْرُهُ:
+                            <span class="font-bold text-emerald-600 text-xl"> ✨ <span id="classic-cert-grade">—</span>% ✨</span>
+                        </div>
+                        <div class="w-full flex justify-between items-end px-12 pb-2 z-10">
+                            <div class="text-center text-xs font-bold text-slate-700">
+                                <div class="w-28 h-[1px] bg-slate-300 mx-auto mb-1"></div>
+                                مربي الصف الدراسي
+                            </div>
+                            <div class="relative w-20 h-20 flex items-center justify-center">
+                                <div class="w-16 h-16 rounded-full border-4 border-brand-gold flex items-center justify-center bg-brand-lightgold">
+                                    <i class="fa-solid fa-star text-brand-gold text-2xl"></i>
+                                </div>
+                            </div>
+                            <div class="text-center text-xs font-bold text-slate-700">
+                                <div class="w-28 h-[1px] bg-slate-300 mx-auto mb-1"></div>
+                                قـائد المـدرسـة
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- العصري -->
+                    <div id="cert-style-modern" class="absolute inset-0 p-8 flex flex-col justify-between items-center text-center bg-brand-navy border-[8px] border-brand-gold text-white hidden">
+                        <div class="text-sm font-bold text-brand-lightgold tracking-widest z-10">ACADEMIC EXCELLENCE AWARD</div>
+                        <div class="text-4xl font-extrabold text-white tracking-wide my-1 z-10">شَهَادَةُ تَمَيُّزٍ وَتَفَوُّقٍ</div>
+                        <div class="text-base text-slate-300 max-w-xl leading-relaxed z-10">
+                            بِكُلِّ فَخْرٍ وَاعْتِزَازٍ، نَمْنَحُ هَذِهِ الشَّهَادَةَ لِلْمُتَمَيِّزِ:<br>
+                            <div id="modern-cert-name" class="text-2xl font-black text-brand-gold my-3 bg-white/5 py-2 px-8 rounded-xl border border-brand-gold/30 inline-block">—</div><br>
+                            مِنْ طُلَّابِ <span id="modern-cert-class" class="font-bold text-brand-lightgold">—</span><br>
+                            الَّذِي حَقَّقَ مُعَدَّلاً مُبْهِراً بِنِسْبَةِ:<br>
+                            <span class="text-brand-gold text-2xl font-black block mt-1"><i class="fa-solid fa-circle-check"></i> <span id="modern-cert-grade">—</span>%</span>
+                        </div>
+                        <div class="w-full flex justify-between items-end px-12 pb-2 z-10">
+                            <div class="text-center text-xs text-slate-400">
+                                <div class="w-28 h-[1px] bg-slate-500 mx-auto mb-1"></div>
+                                المرشد الأكاديمي
+                            </div>
+                            <div class="w-14 h-14 rounded-full border-2 border-brand-gold flex items-center justify-center">
+                                <i class="fa-solid fa-star text-brand-gold text-xl"></i>
+                            </div>
+                            <div class="text-center text-xs text-slate-400">
+                                <div class="w-28 h-[1px] bg-slate-500 mx-auto mb-1"></div>
+                                إدارة المدرسة
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="mt-4 flex justify-between items-center gap-4">
+                <span class="text-xs text-slate-500 font-bold"><i class="fa-solid fa-circle-info"></i> اختر "حفظ كـ PDF" عند الطباعة لحفظها رقمياً.</span>
+                <div class="flex gap-2">
+                    <button onclick="closeCertificateModal()" class="px-5 py-2 rounded-xl text-sm font-bold bg-slate-100 hover:bg-slate-200 text-slate-700 transition">إغلاق</button>
+                    <button onclick="window.print()" class="px-6 py-2 rounded-xl text-sm font-bold bg-brand-navy hover:bg-slate-800 text-white shadow-md flex items-center gap-2 transition">
+                        <i class="fa-solid fa-print"></i>
+                        طباعة الشهادة
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Toast Notifications -->
+    <div id="toast-container" class="fixed bottom-5 left-5 z-50 flex flex-col gap-2 pointer-events-none"></div>
+
+    <script>
+    // ============================================================
+    //  STORAGE: localStorage مع مفتاح ثابت
+    // ============================================================
+    const STORAGE_KEY = 'teacher_portal_students_v1';
+
+    function loadFromStorage() {
+        try {
+            const raw = localStorage.getItem(STORAGE_KEY);
+            return raw ? JSON.parse(raw) : [];
+        } catch (e) {
+            return [];
+        }
+    }
+
+    function saveToStorage(list) {
+        try {
+            localStorage.setItem(STORAGE_KEY, JSON.stringify(list));
+            const now = new Date();
+            const label = `آخر حفظ: ${now.toLocaleTimeString('ar-EG')}`;
+            document.getElementById('last-saved-label').textContent = label;
+        } catch (e) {
+            showToast('مساحة التخزين امتلأت!', 'error');
+        }
+    }
+
+    // مصفوفة البيانات المحلية
+    window.studentsList = loadFromStorage();
+
+    // ============================================================
+    //  CRUD
+    // ============================================================
+    function calcStudentData(raw) {
+        const avg = parseFloat(((raw.math + raw.science + raw.arabic) / 3).toFixed(1));
+        return { ...raw, average: avg, status: avg >= 50 ? 'ناجح' : 'راسب' };
+    }
+
+    function addOrUpdateStudent(data) {
+        const payload = calcStudentData({
+            id: data.id || Date.now().toString(),
+            name: data.name,
+            class: data.class,
+            math: data.math,
+            science: data.science,
+            arabic: data.arabic
+        });
+
+        if (data.id) {
+            const idx = window.studentsList.findIndex(s => s.id === data.id);
+            if (idx !== -1) {
+                window.studentsList[idx] = payload;
+                showToast('تم تحديث بيانات الطالب', 'success');
+            }
+        } else {
+            window.studentsList.push(payload);
+            showToast('تمت إضافة الطالب بنجاح', 'success');
+        }
+
+        saveToStorage(window.studentsList);
+        renderStudentsTable();
+        calculateDashboardStats();
+    }
+
+    function deleteStudent(id) {
+        window.studentsList = window.studentsList.filter(s => s.id !== id);
+        saveToStorage(window.studentsList);
+        showToast('تم حذف الطالب', 'success');
+        renderStudentsTable();
+        calculateDashboardStats();
+    }
+
+    function clearAllData() {
+        if (!confirm('هل أنت متأكد من حذف جميع بيانات الطلاب نهائياً؟')) return;
+        window.studentsList = [];
+        saveToStorage(window.studentsList);
+        showToast('تم مسح جميع البيانات', 'info');
+        renderStudentsTable();
+        calculateDashboardStats();
+    }
+
+    // ============================================================
+    //  UI - الجدول
+    // ============================================================
+    function renderStudentsTable() {
+        const tbody = document.getElementById('students-table-body');
+        const search = document.getElementById('search-input').value.toLowerCase();
+        const cls = document.getElementById('filter-class').value;
+
+        const filtered = window.studentsList.filter(s => {
+            return s.name.toLowerCase().includes(search) &&
+                   (cls === 'الكل' || s.class === cls);
+        });
+
+        document.getElementById('visible-count').textContent = filtered.length;
+        document.getElementById('total-count').textContent = window.studentsList.length;
+
+        if (filtered.length === 0) {
+            tbody.innerHTML = `<tr><td colspan="8" class="text-center p-8 text-slate-400 font-bold">
+                <i class="fa-solid fa-inbox text-3xl mb-2 block"></i>
+                لا يوجد طلاب مطابقون للبحث المحدد
+            </td></tr>`;
+            return;
+        }
+
+        tbody.innerHTML = '';
+        filtered.forEach((s, i) => {
+            const isPass = s.status === 'ناجح';
+            const tr = document.createElement('tr');
+            tr.className = 'hover:bg-slate-50 transition-colors';
+            tr.style.animationDelay = `${i * 30}ms`;
+            tr.innerHTML = `
+                <td class="p-4 font-bold text-slate-800">${escapeHTML(s.name)}</td>
+                <td class="p-4 text-center text-slate-600 font-semibold">${escapeHTML(s.class)}</td>
+                <td class="p-4 text-center font-bold text-slate-700">${s.math}</td>
+                <td class="p-4 text-center font-bold text-slate-700">${s.science}</td>
+                <td class="p-4 text-center font-bold text-slate-700">${s.arabic}</td>
+                <td class="p-4 text-center font-black ${s.average >= 90 ? 'text-amber-500' : 'text-slate-800'}">${s.average}%</td>
+                <td class="p-4 text-center">
+                    <span class="px-2.5 py-1 rounded-full text-xs font-black ${isPass ? 'bg-emerald-100 text-emerald-800' : 'bg-rose-100 text-rose-800'}">
+                        ${s.status}
+                    </span>
+                </td>
+                <td class="p-4 text-center">
+                    <div class="flex items-center justify-center gap-1">
+                        <button onclick="openCertificate('${s.id}')" title="شهادة التقدير" class="bg-brand-lightgold hover:bg-brand-gold text-brand-navy p-2 rounded-lg transition">
+                            <i class="fa-solid fa-award"></i>
+                        </button>
+                        <button onclick="editStudent('${s.id}')" title="تعديل" class="bg-blue-100 hover:bg-blue-200 text-blue-700 p-2 rounded-lg transition">
+                            <i class="fa-solid fa-user-pen"></i>
+                        </button>
+                        <button onclick="confirmDeleteStudent('${s.id}')" title="حذف" class="bg-rose-100 hover:bg-rose-200 text-rose-700 p-2 rounded-lg transition">
+                            <i class="fa-solid fa-trash"></i>
+                        </button>
+                    </div>
+                </td>
+            `;
+            tbody.appendChild(tr);
+        });
+    }
+
+    function calculateDashboardStats() {
+        const list = window.studentsList;
+        const total = list.length;
+
+        if (total === 0) {
+            ['stat-total','stat-average','stat-pass-rate','stat-honors'].forEach(id => {
+                document.getElementById(id).textContent = id === 'stat-total' ? '0' : '0%';
+            });
+            document.getElementById('stat-honors').textContent = '0';
+            return;
+        }
+
+        const avg = (list.reduce((a, s) => a + s.average, 0) / total).toFixed(1);
+        const passRate = ((list.filter(s => s.status === 'ناجح').length / total) * 100).toFixed(0);
+        const honors = list.filter(s => s.average >= 90).length;
+
+        document.getElementById('stat-total').textContent = total;
+        document.getElementById('stat-average').textContent = `${avg}%`;
+        document.getElementById('stat-pass-rate').textContent = `${passRate}%`;
+        document.getElementById('stat-honors').textContent = honors;
+    }
+
+    // ============================================================
+    //  Form Handlers
+    // ============================================================
+    function handleFormSubmit(e) {
+        e.preventDefault();
+        const id = document.getElementById('edit-id').value;
+        addOrUpdateStudent({
+            id: id || null,
+            name: document.getElementById('student-name').value.trim(),
+            class: document.getElementById('student-class').value,
+            math: Number(document.getElementById('grade-math').value),
+            science: Number(document.getElementById('grade-science').value),
+            arabic: Number(document.getElementById('grade-arabic').value)
+        });
+        resetForm();
+    }
+
+    function editStudent(id) {
+        const s = window.studentsList.find(s => s.id === id);
+        if (!s) return;
+        document.getElementById('edit-id').value = s.id;
+        document.getElementById('student-name').value = s.name;
+        document.getElementById('student-class').value = s.class;
+        document.getElementById('grade-math').value = s.math;
+        document.getElementById('grade-science').value = s.science;
+        document.getElementById('grade-arabic').value = s.arabic;
+        document.getElementById('form-title').textContent = 'تعديل درجات الطالب';
+        document.getElementById('save-btn-text').textContent = 'حفظ التعديلات';
+        document.getElementById('cancel-edit-btn').classList.remove('hidden');
+        document.getElementById('student-name').focus();
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+
+    function resetForm() {
+        document.getElementById('student-form').reset();
+        document.getElementById('edit-id').value = '';
+        document.getElementById('form-title').textContent = 'إضافة طالب جديد';
+        document.getElementById('save-btn-text').textContent = 'حفظ البيانات';
+        document.getElementById('cancel-edit-btn').classList.add('hidden');
+    }
+
+    function confirmDeleteStudent(id) {
+        const s = window.studentsList.find(s => s.id === id);
+        if (!s) return;
+        if (confirm(`هل أنت متأكد من حذف الطالب "${s.name}"؟`)) {
+            deleteStudent(id);
+        }
+    }
+
+    // ============================================================
+    //  Certificate
+    // ============================================================
+    function openCertificate(id) {
+        const s = window.studentsList.find(s => s.id === id);
+        if (!s) return;
+        document.getElementById('classic-cert-name').textContent = s.name;
+        document.getElementById('classic-cert-class').textContent = s.class;
+        document.getElementById('classic-cert-grade').textContent = s.average;
+        document.getElementById('modern-cert-name').textContent = s.name;
+        document.getElementById('modern-cert-class').textContent = s.class;
+        document.getElementById('modern-cert-grade').textContent = s.average;
+        document.getElementById('certificate-modal').classList.remove('hidden');
+    }
+
+    function closeCertificateModal() {
+        document.getElementById('certificate-modal').classList.add('hidden');
+    }
+
+    function switchCertificateStyle(style) {
+        const isClassic = style === 'classic';
+        document.getElementById('style-btn-classic').className = `px-4 py-1.5 rounded-xl text-xs font-bold transition-all ${isClassic ? 'bg-brand-navy text-white shadow-md' : 'bg-slate-100 text-slate-700 hover:bg-slate-200'}`;
+        document.getElementById('style-btn-modern').className = `px-4 py-1.5 rounded-xl text-xs font-bold transition-all ${!isClassic ? 'bg-brand-navy text-white shadow-md' : 'bg-slate-100 text-slate-700 hover:bg-slate-200'}`;
+        document.getElementById('cert-style-classic').classList.toggle('hidden', !isClassic);
+        document.getElementById('cert-style-modern').classList.toggle('hidden', isClassic);
+    }
+
+    // ============================================================
+    //  Excel Import / Export
+    // ============================================================
+    function exportToExcel() {
+        if (!window.studentsList.length) { showToast('لا توجد بيانات للتصدير!', 'error'); return; }
+        const rows = window.studentsList.map(s => ({
+            'اسم الطالب': s.name,
+            'الصف الدراسي': s.class,
+            'درجة الرياضيات': s.math,
+            'درجة العلوم': s.science,
+            'درجة اللغة العربية': s.arabic,
+            'المعدل': s.average,
+            'حالة النجاح': s.status
+        }));
+        const ws = XLSX.utils.json_to_sheet(rows);
+        if (!ws['!views']) ws['!views'] = [];
+        ws['!views'].push({ RTL: true });
+        const wb = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(wb, ws, 'درجات الطلاب');
+        XLSX.writeFile(wb, `درجات_الطلاب_${new Date().getFullYear()}.xlsx`);
+        showToast('تم تصدير ملف Excel بنجاح!', 'success');
+    }
+
+    function importFromExcel(event) {
+        const file = event.target.files[0];
+        if (!file) return;
+        const reader = new FileReader();
+        reader.onload = e => {
+            try {
+                const wb = XLSX.read(new Uint8Array(e.target.result), { type: 'array' });
+                const rows = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]]);
+                if (!rows.length) { showToast('الملف فارغ!', 'error'); return; }
+
+                let count = 0;
+                rows.forEach(row => {
+                    const name = row['اسم الطالب'] || row['الاسم'] || row['Name'] || '';
+                    if (!name) return;
+                    addOrUpdateStudent({
+                        id: null,
+                        name,
+                        class: row['الصف الدراسي'] || row['الصف'] || row['Class'] || 'الصف الأول',
+                        math: Number(row['درجة الرياضيات'] || row['الرياضيات'] || row['Math'] || 0),
+                        science: Number(row['درجة العلوم'] || row['العلوم'] || row['Science'] || 0),
+                        arabic: Number(row['درجة اللغة العربية'] || row['العربية'] || row['Arabic'] || 0),
+                    });
+                    count++;
+                });
+                showToast(`تم استيراد ${count} طلاب بنجاح!`, 'success');
+            } catch (err) {
+                showToast('خطأ في قراءة ملف Excel', 'error');
+            }
+        };
+        reader.readAsArrayBuffer(file);
+        event.target.value = '';
+    }
+
+    // ============================================================
+    //  Toast
+    // ============================================================
+    function showToast(msg, type = 'info') {
+        const container = document.getElementById('toast-container');
+        const el = document.createElement('div');
+        const colors = { success: 'bg-emerald-600 border-emerald-400', error: 'bg-rose-600 border-rose-400', info: 'bg-blue-600 border-blue-400' };
+        const icons = { success: 'fa-circle-check', error: 'fa-triangle-exclamation', info: 'fa-circle-info' };
+        el.className = `p-4 rounded-xl shadow-lg text-white font-bold text-sm flex items-center gap-3 pointer-events-auto max-w-sm border-r-4 transition-all duration-300 ${colors[type]}`;
+        el.innerHTML = `<i class="fa-solid ${icons[type]} text-lg"></i><span>${msg}</span>`;
+        container.appendChild(el);
+        setTimeout(() => { el.classList.add('opacity-0'); setTimeout(() => el.remove(), 300); }, 3000);
+    }
+
+    // ============================================================
+    //  Offline Detection
+    // ============================================================
+    function updateOnlineStatus() {
+        document.body.classList.toggle('offline', !navigator.onLine);
+        if (!navigator.onLine) showToast('أنت الآن بدون إنترنت — البيانات لا تزال محفوظة محلياً', 'info');
+    }
+    window.addEventListener('online', updateOnlineStatus);
+    window.addEventListener('offline', updateOnlineStatus);
+
+    // ============================================================
+    //  PWA Install Prompt
+    // ============================================================
+    let deferredPrompt = null;
+    window.addEventListener('beforeinstallprompt', e => {
+        e.preventDefault();
+        deferredPrompt = e;
+        document.getElementById('install-btn').classList.remove('hidden');
+    });
+
+    function installPWA() {
+        if (!deferredPrompt) return;
+        deferredPrompt.prompt();
+        deferredPrompt.userChoice.then(() => {
+            deferredPrompt = null;
+            document.getElementById('install-btn').classList.add('hidden');
+        });
+    }
+
+    // ============================================================
+    //  Utils
+    // ============================================================
+    function escapeHTML(str) {
+        return String(str).replace(/[&<>'"]/g,
+            t => ({ '&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;' }[t]));
+    }
+
+    // ============================================================
+    //  Init
+    // ============================================================
+    window.addEventListener('DOMContentLoaded', () => {
+        renderStudentsTable();
+        calculateDashboardStats();
+        updateOnlineStatus();
+
+        // إظهار وقت آخر حفظ إذا كانت هناك بيانات
+        if (window.studentsList.length > 0) {
+            document.getElementById('last-saved-label').textContent =
+                `${window.studentsList.length} طالب محفوظ على جهازك`;
+        }
+    });
+    </script>
+</body>
+</html>
