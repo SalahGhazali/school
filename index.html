@@ -4,6 +4,13 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>بوابة المعلم الذكية</title>
+    <link rel="manifest" href="manifest.json">
+
+<script>
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.register('sw.js');
+  }
+</script>
 
     <!-- PWA Manifest مدمج -->
     <script>
@@ -30,6 +37,7 @@
     link.href = manifestURL;
     document.head.appendChild(link);
     </script>
+    
 
     <!-- Service Worker تسجيل -->
     <script>
